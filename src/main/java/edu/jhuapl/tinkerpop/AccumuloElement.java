@@ -71,6 +71,11 @@ public abstract class AccumuloElement implements Element {
     return parent.getPropertyKeys(type, id);
   }
 
+  public void setProperty(String key, Object value,long timestamp) {
+    Integer timeout = parent.setProperty(type, id, key, value, timestamp);
+    cacheProperty(key, value, timeout);
+  }
+
   public void setProperty(String key, Object value) {
     Integer timeout = parent.setProperty(type, id, key, value);
     cacheProperty(key, value, timeout);

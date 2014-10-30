@@ -15,15 +15,8 @@
 package edu.jhuapl.tinkerpop;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
+import java.util.*;
 import java.util.Map.Entry;
-import java.util.Set;
-import java.util.SortedSet;
-import java.util.UUID;
 import java.util.regex.Pattern;
 
 import org.apache.accumulo.core.client.AccumuloException;
@@ -41,7 +34,9 @@ import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Mutation;
 import org.apache.accumulo.core.data.Range;
 import org.apache.accumulo.core.data.Value;
+import org.apache.accumulo.core.iterators.IteratorUtil;
 import org.apache.accumulo.core.iterators.user.RegExFilter;
+import org.apache.accumulo.core.iterators.user.TimestampFilter;
 import org.apache.accumulo.core.util.Pair;
 import org.apache.accumulo.core.util.PeekingIterator;
 import org.apache.commons.configuration.Configuration;
@@ -200,12 +195,16 @@ public class AccumuloGraph implements Graph, KeyIndexableGraph, IndexableGraph {
   protected static final Text TOUTEDGE = new Text(OUTEDGE);
   protected static final Text TLABEL = new Text(LABEL);
 
+  protected static final String TIMESTAMPFILTER ="TIMESTAMP_FILTER";
+
   MultiTableBatchWriter writer;
   BatchWriter vertexBW;
   BatchWriter edgeBW;
 
   LruElementCache<Vertex> vertexCache;
   LruElementCache<Edge> edgeCache;
+
+  protected Range range = null;
 
   public AccumuloGraph(Configuration cfg) {
     this(new AccumuloGraphConfiguration(cfg));
@@ -217,7 +216,9 @@ public class AccumuloGraph implements Graph, KeyIndexableGraph, IndexableGraph {
    * @param config
    */
   public AccumuloGraph(AccumuloGraphConfiguration config) {
-    config.validate();
+    if(config.getInstanceType() != AccumuloGraphConfiguration.InstanceType.Mini) {
+        config.validate();
+    }
     this.config = config;
 
     if (config.useLruCache()) {
@@ -253,10 +254,53 @@ public class AccumuloGraph implements Graph, KeyIndexableGraph, IndexableGraph {
       String tableName = config.getEdgeTable();
       if (type.equals(Vertex.class))
         tableName = config.getVertexTable();
-      return config.getConnector().createScanner(tableName, config.getAuthorizations());
+        Scanner scanner =config.getConnector().createScanner(tableName, config.getAuthorizations());
+        if(range != null) {
+            scanner.setRange(range);
+        }
+        return scanner;
     } catch (Exception e) {
       throw new RuntimeException(e);
     }
+  }
+
+  protected void removeTimestampFilter(){
+      setTimestampFilter(null,null);
+  }
+
+  protected void setTimestampFilter(Long start, Long end){
+      try {
+          TableOperations tableOperations = config.getConnector().tableOperations();
+
+          IteratorSetting is = new IteratorSetting(21, TimestampFilter.class);
+          is.setName(TIMESTAMPFILTER);
+          TimestampFilter filter = new TimestampFilter();
+          if(end != null) {
+              filter.setEnd(is, end, true);
+          }
+          if(start != null){
+              filter.setStart(is, start, true);
+          }
+          //config.getConnector().tableOperations().attachIterator("timeFilter",is);
+          Set<String> tables = tableOperations.list();
+          for(String table:tables){
+              if(!table.startsWith("!")){
+                  Map<String,EnumSet<IteratorUtil.IteratorScope>> iterators = tableOperations.listIterators(table);
+                  EnumSet<IteratorUtil.IteratorScope> iteratorScopes = iterators.get(TIMESTAMPFILTER);
+                  if(iteratorScopes == null){
+                      tableOperations.attachIterator(table,is);
+                  }else{
+                      tableOperations.removeIterator(table,TIMESTAMPFILTER, iteratorScopes);
+                      if(start != null || end != null){
+                          tableOperations.attachIterator(table,is);
+                      }
+                  }
+                  iterators = tableOperations.listIterators(table);
+              }
+          }
+      }catch(Exception e){
+          e.printStackTrace();
+      }
   }
 
   protected Scanner getScanner(String tablename) {
@@ -275,6 +319,8 @@ public class AccumuloGraph implements Graph, KeyIndexableGraph, IndexableGraph {
     }
     return null;
   }
+
+
 
   // Aliases for the lazy
   protected Scanner getMetadataScanner() {
@@ -380,42 +426,50 @@ public class AccumuloGraph implements Graph, KeyIndexableGraph, IndexableGraph {
   }
 
   public Vertex addVertex(Object id) {
-    String myID;
-    if (id == null) {
-      myID = UUID.randomUUID().toString();
-    } else {
+      return addVertex(id,-1);
+  }
+
+  public Vertex addVertex(Object id, long timestamp){
+      String myID;
+      if (id == null) {
+          myID = UUID.randomUUID().toString();
+      } else {
+          try {
+              myID = id.toString();// (String) id;
+          } catch (ClassCastException e) {
+              return null;
+          }
+      }
+
+      Vertex vert = null;
+      if (!config.skipExistenceChecks()) {
+          vert = getVertex(myID);
+          if (vert != null) {
+              ExceptionFactory.vertexWithIdAlreadyExists(myID);
+          }
+      }
+
+      Mutation m = new Mutation(myID);
+      if(timestamp > 0) {
+          m.put(LABEL, EXISTS, timestamp, EMPTY);
+      }else{
+          m.put(LABEL, EXISTS, EMPTY);
+      }
+
       try {
-        myID = id.toString();// (String) id;
-      } catch (ClassCastException e) {
-        return null;
+          vertexBW.addMutation(m);
+      } catch (MutationsRejectedException e) {
+          e.printStackTrace();
+          return null;
       }
-    }
 
-    Vertex vert = null;
-    if (!config.skipExistenceChecks()) {
-      vert = getVertex(myID);
-      if (vert != null) {
-        ExceptionFactory.vertexWithIdAlreadyExists(myID);
+      checkedFlush();
+      vert = new AccumuloVertex(this, myID);
+
+      if (vertexCache != null) {
+          vertexCache.cache(vert);
       }
-    }
-
-    Mutation m = new Mutation(myID);
-    m.put(LABEL, EXISTS, EMPTY);
-
-    try {
-      vertexBW.addMutation(m);
-    } catch (MutationsRejectedException e) {
-      e.printStackTrace();
-      return null;
-    }
-
-    checkedFlush();
-    vert = new AccumuloVertex(this, myID);
-
-    if (vertexCache != null) {
-      vertexCache.cache(vert);
-    }
-    return vert;
+      return vert;
   }
 
   public Vertex getVertex(Object id) {
@@ -482,6 +536,8 @@ public class AccumuloGraph implements Graph, KeyIndexableGraph, IndexableGraph {
     }
     return vertex;
   }
+
+
 
   public void removeVertex(Vertex vertex) {
     if (vertexCache != null) {
@@ -1110,13 +1166,27 @@ public class AccumuloGraph implements Graph, KeyIndexableGraph, IndexableGraph {
   /**
    * Sets the property. Requires a round-trip to Accumulo to see if the property exists iff the provided key has an index. Therefore, for best performance if at
    * all possible create indices after bulk ingest.
-   * 
+   *
    * @param type
    * @param id
    * @param key
    * @param val
    */
   Integer setProperty(Class<? extends Element> type, String id, String key, Object val) {
+      return setProperty(type, id, key, val, -1);
+  }
+
+  /**
+   * Sets the property. Requires a round-trip to Accumulo to see if the property exists iff the provided key has an index. Therefore, for best performance if at
+   * all possible create indices after bulk ingest.
+   * 
+   * @param type
+   * @param id
+   * @param key
+   * @param val
+   * @param timestamp
+   */
+  Integer setProperty(Class<? extends Element> type, String id, String key, Object val, long timestamp) {
     checkProperty(key, val);
     try {
       byte[] newByteVal = AccumuloByteSerializer.serialize(val);
@@ -1132,13 +1202,21 @@ public class AccumuloGraph implements Graph, KeyIndexableGraph, IndexableGraph {
           bw.addMutation(m);
         }
         m = new Mutation(newByteVal);
-        m.put(key.getBytes(), id.getBytes(), EMPTY);
+        if(timestamp > 0){
+            m.put(key.getBytes(), id.getBytes(), timestamp, EMPTY);
+        }else {
+            m.put(key.getBytes(), id.getBytes(), EMPTY);
+        }
         bw.addMutation(m);
         checkedFlush();
       }
 
       m = new Mutation(id);
-      m.put(key.getBytes(), EMPTY, newByteVal);
+      if(timestamp > 0){
+        m.put(key.getBytes(), EMPTY, timestamp,newByteVal);
+      }else {
+        m.put(key.getBytes(), EMPTY, newByteVal);
+      }
       getBatchWriter(type).addMutation(m);
 
       checkedFlush();

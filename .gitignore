@@ -1,6 +1,25 @@
+**/target
+**/.idea
+**/*.iml
+**/neo4j_data_chm2
+.DS_Store
+
+# use glob syntax.
+syntax: glob
+.gradle/
+
+# Build output
+build/
+out/
 target/
-.settings/
-.classpath
-.project
-/target/
-*.swp
+bin/
+
+# IntelliJ
+.idea/
+*.iml
+*.ipr
+*.iws
+*.log
+
+#merge stuff
+.merge_*

@@ -691,22 +691,25 @@ public class AccumuloGraphConfiguration implements Serializable {
         break;
       case Mini:
         File dir = null;
-        if (miniClusterTempDir == null) {
-          dir = createTempDir();
-          dir.deleteOnExit();
-        } else {
-          // already set by setMiniClusterTempDir(), It should be cleaned up outside of this class.
-          dir = new File(miniClusterTempDir);
+        if(accumuloMiniCluster == null) {
+            if (miniClusterTempDir == null) {
+                dir = createTempDir();
+                dir.deleteOnExit();
+            } else {
+                // already set by setMiniClusterTempDir(), It should be cleaned up outside of this class.
+                dir = new File(miniClusterTempDir);
+            }
+            accumuloMiniCluster = new MiniAccumuloCluster(dir, ""); // conf.getString(PASSWORD)
+            try {
+                accumuloMiniCluster.start();
+            } catch (Exception ex) {
+                ex.printStackTrace();
+                System.out.println("");
+            }
         }
-        accumuloMiniCluster = new MiniAccumuloCluster(dir, ""); // conf.getString(PASSWORD)
-        try {
-          accumuloMiniCluster.start();
-        } catch (Exception ex) {
-          ex.printStackTrace();
-          System.out.println("");
-        }
+
         inst = new ZooKeeperInstance(accumuloMiniCluster.getInstanceName(), accumuloMiniCluster.getZooKeepers());
-        throw new UnsupportedOperationException("TODO");
+        break;
       case Mock:
         inst = new MockInstance(getInstance());
         break;

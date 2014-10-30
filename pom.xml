@@ -35,6 +35,11 @@
 			<email>sandy@hider.us</email>
 			<url>https://github.com/sandyhider</url>
 		</developer>
+        <developer>
+            <name>Mark Bakker</name>
+            <email>mbakker@xebia.com</email>
+            <url>https://github.com/markbakker78</url>
+        </developer>
 	</developers>
 
 	<properties>
@@ -105,7 +110,6 @@
 			<artifactId>rexster-server</artifactId>
 			<version>2.6.0</version>
 		</dependency>
-
 	</dependencies>
 
 	<distributionManagement>
