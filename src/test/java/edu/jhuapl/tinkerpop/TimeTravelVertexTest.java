@@ -1,7 +1,5 @@
 package edu.jhuapl.tinkerpop;
 
-import com.tinkerpop.blueprints.Direction;
-import com.tinkerpop.blueprints.Edge;
 import com.tinkerpop.blueprints.GraphFactory;
 import com.tinkerpop.blueprints.Vertex;
 import org.apache.accumulo.core.client.admin.TableOperations;
@@ -187,7 +185,7 @@ public class TimeTravelVertexTest {
     assertNextEntry(iter, time1, "Name@Time1");
     assertThat(iter.hasNext(), is(false));
 
-    // After delete, where is nothing left :-(
+    // After delete, there is nothing left :-(
     vertex1.removeProperty("name");
     property = ((AccumuloElement) vertex1).getVersionedProperty("name");
     iter = property.entrySet().iterator();
