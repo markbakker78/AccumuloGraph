@@ -114,7 +114,7 @@ public abstract class AccumuloElement implements Element {
   }
 
   void cacheProperty(String key, Object value, Integer timeoutMillis) {
-    if (timeoutMillis == null) {
+    if (timeoutMillis == null || timeoutMillis <= 0) {
       // user does not want to cache data...
       return;
     }
