@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import java.util.SortedSet;
 
 import static edu.jhuapl.tinkerpop.AccumuloGraphConfiguration.InstanceType.Mini;
+import static edu.jhuapl.tinkerpop.AccumuloGraphConfiguration.InstanceType.Mock;
 import static org.hamcrest.CoreMatchers.*;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.fail;
@@ -47,7 +48,7 @@ public class TimeTravelVertexTest {
     graph.disableTimestampFilterOnThisThread();
 
     // Default the versioning is disabled for all tables. (set to max 1 version)
-    setScanMaxVersionsOnTables(graph, 5);
+    setScanMaxVersionsOnTables(graph, 2);
   }
 
   @Test
@@ -100,23 +101,36 @@ public class TimeTravelVertexTest {
     // Time1 before insert, NOT found
     graph.enableTimestampFilterOnThisThread(null, time1);
     assertThat(graph.getVertex("vertex1"), nullValue());
+
+    // After Time1 vetext should be found
+    graph.enableTimestampFilterOnThisThread(time1, null);
+    assertThat(graph.getVertex("vertex1"), notNullValue());
   }
 
-  @Test
-  public void retrieveVertexAfterDelete() throws Exception {
-    Vertex newVertex = graph.addVertex("vertex1");
-    long tsBeforeDelete = System.currentTimeMillis();
-    Thread.sleep(5);
-    graph.removeVertex(newVertex);
-    long tsAfterDelete = System.currentTimeMillis();
+  /*
+  From the docs: https://accumulo.apache.org/1.6/accumulo_user_manual.html#_deletes.
 
-    // No timestamfilter, NOT found
+  Deletes are special keys in Accumulo that get sorted along will all the other data.
+  When a delete key is inserted, Accumulo will not show anything that has a timestamp
+  less than or equal to the delete key. During major compaction, any keys older
+  than a delete key are omitted from the new file created, and the omitted keys are
+  removed from disk as part of the regular garbage collection process.
+  */
+  @Test
+  public void retrieveVertexBeforeDelete() throws Exception {
+    long tsBeforeDelete = System.currentTimeMillis();
+    Vertex newVertex = graph.addVertex("vertex1", tsBeforeDelete);
+
+    Thread.sleep(5);
+    
+    long tsOfDeletion = System.currentTimeMillis();
+    graph.removeVertex(newVertex, tsOfDeletion);
+
+    // No timestamfilter, NOT found at this time.
     assertThat(graph.getVertex("vertex1"), nullValue());
 
+    // Accumulo will not return anything when key is deleted..., also before deletion.
     graph.enableTimestampFilterOnThisThread(null, tsBeforeDelete);
-    assertThat(graph.getVertex("vertex1"), notNullValue());
-
-    graph.enableTimestampFilterOnThisThread(tsAfterDelete, null);
     assertThat(graph.getVertex("vertex1"), nullValue());
   }
 
@@ -152,7 +166,10 @@ public class TimeTravelVertexTest {
                 - minc: applied at minor compaction
                 - majc: applied at major compaction
             */
+
       tableOperations.setProperty(table, "table.iterator.scan.vers.opt.maxVersions", String.valueOf(maxVersions));
+
+      LOG.debug("Set maxVersions for table {} to {}.", table, maxVersions);
     }
   }
 }

@@ -262,6 +262,7 @@ public class AccumuloGraph implements Graph, KeyIndexableGraph, IndexableGraph {
       Preconditions.checkState(start <= end, "Start should be earlear/equal to end.");
     }
 
+    // TODO What priority is good?
     IteratorSetting it = new IteratorSetting(21, TimestampFilter.class);
     it.setName(TIMESTAMPFILTER);
 
@@ -272,7 +273,7 @@ public class AccumuloGraph implements Graph, KeyIndexableGraph, IndexableGraph {
       TimestampFilter.setStart(it, start, true);
     }
 
-    // put result on threadLocal variable for later use.
+    // put result on ThreadLocal variable for later use.
     timestamFilter.set(it);
   }
 
@@ -385,7 +386,7 @@ public class AccumuloGraph implements Graph, KeyIndexableGraph, IndexableGraph {
   }
 
   public Vertex addVertex(Object id) {
-      return addVertex(id,-1);
+      return addVertex(id, 0L);
   }
 
   public Vertex addVertex(Object id, long timestamp){
@@ -409,7 +410,7 @@ public class AccumuloGraph implements Graph, KeyIndexableGraph, IndexableGraph {
       }
 
       Mutation m = new Mutation(myID);
-      if(timestamp > 0) {
+      if(timestamp > 0L) {
           m.put(LABEL, EXISTS, timestamp, EMPTY);
       }else{
           m.put(LABEL, EXISTS, EMPTY);
@@ -497,8 +498,11 @@ public class AccumuloGraph implements Graph, KeyIndexableGraph, IndexableGraph {
   }
 
 
-
   public void removeVertex(Vertex vertex) {
+    removeVertex(vertex, 0L);
+  }
+
+  public void removeVertex(Vertex vertex, long timestamp) {
     if (vertexCache != null) {
       vertexCache.remove(vertex.getId());
     }
@@ -535,11 +539,19 @@ public class AccumuloGraph implements Graph, KeyIndexableGraph, IndexableGraph {
           ranges.add(new Range(k.getColumnQualifier().toString().split(IDDELIM)[1]));
 
           Mutation vm = new Mutation(k.getColumnQualifier().toString().split(IDDELIM)[0]);
-          vm.putDelete(invert(k.getColumnFamily()), new Text(vertex.getId().toString() + IDDELIM + k.getColumnQualifier().toString().split(IDDELIM)[1]));
+          if (timestamp > 0L) {
+            vm.putDelete(invert(k.getColumnFamily()), new Text(vertex.getId().toString() + IDDELIM + k.getColumnQualifier().toString().split(IDDELIM)[1]), timestamp);
+          } else {
+            vm.putDelete(invert(k.getColumnFamily()), new Text(vertex.getId().toString() + IDDELIM + k.getColumnQualifier().toString().split(IDDELIM)[1]));
+          }
           vertexBW.addMutation(vm);
         } else {
           Mutation m = new Mutation(e.getValue().get());
-          m.putDelete(k.getColumnFamily(), k.getRow());
+          if (timestamp > 0L) {
+            m.putDelete(k.getColumnFamily(), k.getRow(), timestamp);
+          } else {
+            m.putDelete(k.getColumnFamily(), k.getRow());
+          }
           indexdeleter.addMutation(m);
         }
 
@@ -729,13 +741,29 @@ public class AccumuloGraph implements Graph, KeyIndexableGraph, IndexableGraph {
 
     try {
       Mutation m = new Mutation(myID);
-      m.put(LABEL, (inVertex.getId().toString() + IDDELIM + outVertex.getId().toString()).getBytes(), timestamp, AccumuloByteSerializer.serialize(label));
+
+      String inV = inVertex.getId().toString();
+      String outV = outVertex.getId().toString();
+
+      if (timestamp > 0L) {
+        m.put(LABEL, (inV + IDDELIM + outV).getBytes(), timestamp, AccumuloByteSerializer.serialize(label));
+      } else {
+        m.put(LABEL, (inV + IDDELIM + outV).getBytes(), AccumuloByteSerializer.serialize(label));
+      }
       edgeBW.addMutation(m);
-      m = new Mutation(inVertex.getId().toString());
-      m.put(INEDGE, (outVertex.getId().toString() + IDDELIM + myID).getBytes(), timestamp, (IDDELIM + label).getBytes());
+      m = new Mutation(inV);
+      if (timestamp > 0L) {
+        m.put(INEDGE, (outV + IDDELIM + myID).getBytes(), timestamp, (IDDELIM + label).getBytes());
+      } else {
+        m.put(INEDGE, (outV + IDDELIM + myID).getBytes(), (IDDELIM + label).getBytes());
+      }
       vertexBW.addMutation(m);
-      m = new Mutation(outVertex.getId().toString());
-      m.put(OUTEDGE, (inVertex.getId().toString() + IDDELIM + myID).getBytes(), timestamp, (IDDELIM + label).getBytes());
+      m = new Mutation(outV);
+      if (timestamp > 0L) {
+        m.put(OUTEDGE, (inV + IDDELIM + myID).getBytes(), timestamp, (IDDELIM + label).getBytes());
+      } else {
+        m.put(OUTEDGE, (inV + IDDELIM + myID).getBytes(), (IDDELIM + label).getBytes());
+      }
       vertexBW.addMutation(m);
     } catch (MutationsRejectedException e) {
       e.printStackTrace();
@@ -825,6 +853,10 @@ public class AccumuloGraph implements Graph, KeyIndexableGraph, IndexableGraph {
   }
 
   public void removeEdge(Edge edge) {
+    removeEdge(edge, 0L);
+  }
+
+  public void removeEdge(Edge edge, long timestamp) {
     if (!config.isIndexableGraphDisabled())
       clearIndex(edge.getId());
 
@@ -848,7 +880,11 @@ public class AccumuloGraph implements Graph, KeyIndexableGraph, IndexableGraph {
         outVert = new Text(ids[1]);
       } else {
         Mutation m = new Mutation(k.getColumnQualifier());
-        m.putDelete(k.getColumnFamily(), k.getRow());
+        if (timestamp > 0L) {
+          m.putDelete(k.getColumnFamily(), k.getRow());
+        } else {
+          m.putDelete(k.getColumnFamily(), k.getRow(), timestamp);
+        }
         indexMutations.add(m);
       }
     }
@@ -1156,7 +1192,7 @@ public class AccumuloGraph implements Graph, KeyIndexableGraph, IndexableGraph {
           bw.addMutation(m);
         }
         m = new Mutation(newByteVal);
-        if(timestamp > 0){
+        if(timestamp > 0L){
             m.put(key.getBytes(), id.getBytes(), timestamp, EMPTY);
         }else {
             m.put(key.getBytes(), id.getBytes(), EMPTY);
@@ -1166,7 +1202,7 @@ public class AccumuloGraph implements Graph, KeyIndexableGraph, IndexableGraph {
       }
 
       m = new Mutation(id);
-      if(timestamp > 0){
+      if(timestamp > 0L){
         m.put(key.getBytes(), EMPTY, timestamp,newByteVal);
       }else {
         m.put(key.getBytes(), EMPTY, newByteVal);
@@ -1371,7 +1407,11 @@ public class AccumuloGraph implements Graph, KeyIndexableGraph, IndexableGraph {
 
       BatchWriter writer = getWriter(config.getMetadataTable());
       Mutation m = new Mutation(indexName);
-      m.put(indexClass.getSimpleName().getBytes(), EMPTY, timestamp, EMPTY);
+      if (timestamp > 0L) {
+        m.put(indexClass.getSimpleName().getBytes(), EMPTY, timestamp, EMPTY);
+      } else {
+        m.put(indexClass.getSimpleName().getBytes(), EMPTY, EMPTY);
+      }
       try {
         writer.addMutation(m);
       } catch (MutationsRejectedException e) {
@@ -1498,7 +1538,11 @@ public class AccumuloGraph implements Graph, KeyIndexableGraph, IndexableGraph {
     BatchWriter w = getKeyMetadataWriter();
 
     Mutation m = new Mutation(key);
-    m.put(elementClass.getSimpleName().getBytes(), EMPTY, timestamp, EMPTY);
+    if (timestamp > 0L) {
+      m.put(elementClass.getSimpleName().getBytes(), EMPTY, timestamp, EMPTY);
+    } else {
+      m.put(elementClass.getSimpleName().getBytes(), EMPTY, EMPTY);
+    }
     try {
       w.addMutation(m);
     } catch (MutationsRejectedException e) {
@@ -1518,7 +1562,11 @@ public class AccumuloGraph implements Graph, KeyIndexableGraph, IndexableGraph {
         Key k = entry.getKey();
         Value v = entry.getValue();
         Mutation mu = new Mutation(v.get());
-        mu.put(k.getColumnFamily().getBytes(), k.getRow().getBytes(), timestamp, EMPTY);
+        if (timestamp > 0L) {
+          mu.put(k.getColumnFamily().getBytes(), k.getRow().getBytes(), timestamp, EMPTY);
+        } else {
+          mu.put(k.getColumnFamily().getBytes(), k.getRow().getBytes(), EMPTY);
+        }
         try {
           bw.addMutation(mu);
         } catch (MutationsRejectedException e) {
