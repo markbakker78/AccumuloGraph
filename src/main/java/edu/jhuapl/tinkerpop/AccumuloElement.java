@@ -15,6 +15,7 @@
 package edu.jhuapl.tinkerpop;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 
@@ -35,6 +36,14 @@ public abstract class AccumuloElement implements Element {
     this.parent = parent;
     this.id = id;
     this.type = type;
+  }
+
+  /**
+   * Returns the value of the property over time, when the timestamp filter is enabled.
+   * The result is stored in a Map with key timestamp and its value. The map is ordered by insertions.
+   */
+  public <T> LinkedHashMap<Long, T> getVersionedProperty(String key) {
+    return parent.getVersionedProperty(type, id, key);
   }
 
   public <T> T getProperty(String key) {

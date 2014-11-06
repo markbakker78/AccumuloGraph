@@ -15,6 +15,7 @@
 package edu.jhuapl.tinkerpop;
 
 import com.google.common.base.Preconditions;
+import com.google.common.collect.Maps;
 import com.tinkerpop.blueprints.*;
 import com.tinkerpop.blueprints.util.DefaultGraphQuery;
 import com.tinkerpop.blueprints.util.ExceptionFactory;
@@ -1111,6 +1112,35 @@ public class AccumuloGraph implements Graph, KeyIndexableGraph, IndexableGraph {
     }
     s.close();
     return new Pair<Integer,T>(config.getPropertyCacheTimeoutMillis(key), toRet);
+  }
+
+  /**
+   * Return property for each timestamp when timestampFilter is enabled.
+   * Map is a LinkedHashMap with order of insertion.
+   */
+  <T> LinkedHashMap<Long, T> getVersionedProperty(Class<? extends Element> type, String id, String key) {
+    //TODO Add caching, timestampFilter is available here, slice in time could be loaded before.
+
+    Text colf = null;
+    if (StringFactory.LABEL.equals(key)) {
+      colf = AccumuloGraph.TLABEL;
+    } else {
+      colf = new Text(key);
+    }
+
+    Scanner s = getElementScanner(type);
+    s.setRange(new Range(id));
+    s.fetchColumnFamily(colf);
+
+    LinkedHashMap<Long, T> toRet = Maps.newLinkedHashMap();
+
+    for (Entry<Key,Value> e : s) {
+      T desserialize = AccumuloByteSerializer.desserialize(e.getValue().get());
+      toRet.put(e.getKey().getTimestamp(), desserialize);
+    }
+
+    s.close();
+    return toRet;
   }
 
   void preloadProperties(AccumuloElement element, Class<? extends Element> type) {

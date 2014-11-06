@@ -1,5 +1,7 @@
 package edu.jhuapl.tinkerpop;
 
+import com.tinkerpop.blueprints.Direction;
+import com.tinkerpop.blueprints.Edge;
 import com.tinkerpop.blueprints.GraphFactory;
 import com.tinkerpop.blueprints.Vertex;
 import org.apache.accumulo.core.client.admin.TableOperations;
@@ -8,10 +10,9 @@ import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.SortedSet;
+import java.util.*;
 
 import static edu.jhuapl.tinkerpop.AccumuloGraphConfiguration.InstanceType.Mini;
-import static edu.jhuapl.tinkerpop.AccumuloGraphConfiguration.InstanceType.Mock;
 import static org.hamcrest.CoreMatchers.*;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.fail;
@@ -48,7 +49,7 @@ public class TimeTravelVertexTest {
     graph.disableTimestampFilterOnThisThread();
 
     // Default the versioning is disabled for all tables. (set to max 1 version)
-    setScanMaxVersionsOnTables(graph, 2);
+    setScanMaxVersionsOnTables(graph, 5);
   }
 
   @Test
@@ -122,16 +123,75 @@ public class TimeTravelVertexTest {
     Vertex newVertex = graph.addVertex("vertex1", tsBeforeDelete);
 
     Thread.sleep(5);
-    
+
     long tsOfDeletion = System.currentTimeMillis();
     graph.removeVertex(newVertex, tsOfDeletion);
 
-    // No timestamfilter, NOT found at this time.
+    // No timestampFilter, NOT found at this time.
     assertThat(graph.getVertex("vertex1"), nullValue());
 
-    // Accumulo will not return anything when key is deleted..., also before deletion.
+    // Accumulo will not return anything when key is deleted...  :-(
+    // It's logical, because compaction will remove old stuff for real.
     graph.enableTimestampFilterOnThisThread(null, tsBeforeDelete);
     assertThat(graph.getVertex("vertex1"), nullValue());
+  }
+
+  @Test
+  public void propertyThroughTime() {
+    long time1 = System.currentTimeMillis();
+    long time2 = time1 + 5;
+    long time3 = time1 + 10;
+
+    AccumuloVertex newVertex = (AccumuloVertex) graph.addVertex("vertex1", time1);
+    newVertex.setProperty("name", "Name@Time1", time1);
+    newVertex.setProperty("name", "Name@Time2", time2); // overwrite 5ms later.
+    newVertex.setProperty("name", "Name@Time3", time3); // overwrite 5ms later.
+
+    Vertex vertex1 = graph.getVertex("vertex1");
+
+    Iterator<Map.Entry<Long, String>> iter;
+    Map<Long, String> property;
+
+    graph.disableTimestampFilterOnThisThread();
+    property = ((AccumuloElement) vertex1).getVersionedProperty("name");
+    iter = property.entrySet().iterator();
+    assertNextEntry(iter, time3, "Name@Time3");
+    assertNextEntry(iter, time2, "Name@Time2");
+    assertNextEntry(iter, time1, "Name@Time1");
+    assertThat(iter.hasNext(), is(false));
+
+    graph.enableTimestampFilterOnThisThread(null, time3);
+    property = ((AccumuloElement) vertex1).getVersionedProperty("name");
+    iter = property.entrySet().iterator();
+    assertNextEntry(iter, time3, "Name@Time3");
+    assertNextEntry(iter, time2, "Name@Time2");
+    assertNextEntry(iter, time1, "Name@Time1");
+    assertThat(iter.hasNext(), is(false));
+
+    graph.enableTimestampFilterOnThisThread(time2, time3);
+    property = ((AccumuloElement) vertex1).getVersionedProperty("name");
+    iter = property.entrySet().iterator();
+    assertNextEntry(iter, time3, "Name@Time3");
+    assertNextEntry(iter, time2, "Name@Time2");
+    assertThat(iter.hasNext(), is(false));
+
+    graph.enableTimestampFilterOnThisThread(time3, null);
+    property = ((AccumuloElement) vertex1).getVersionedProperty("name");
+    iter = property.entrySet().iterator();
+    assertNextEntry(iter, time3, "Name@Time3");
+    assertThat(iter.hasNext(), is(false));
+
+    graph.enableTimestampFilterOnThisThread(null, time1);
+    property = ((AccumuloElement) vertex1).getVersionedProperty("name");
+    iter = property.entrySet().iterator();
+    assertNextEntry(iter, time1, "Name@Time1");
+    assertThat(iter.hasNext(), is(false));
+
+    // After delete, where is nothing left :-(
+    vertex1.removeProperty("name");
+    property = ((AccumuloElement) vertex1).getVersionedProperty("name");
+    iter = property.entrySet().iterator();
+    assertThat(iter.hasNext(), is(false));
   }
 
   @Test
@@ -149,6 +209,15 @@ public class TimeTravelVertexTest {
     } catch (IllegalStateException e) {
       assertThat(e.getMessage(), is("Start should be earlear/equal to end."));
     }
+  }
+
+  private static void assertNextEntry(Iterator<Map.Entry<Long, String>> iter, long expectedTs, String expectedValue) {
+    assertThat(iter.hasNext(), is(true));
+
+    Map.Entry<Long, String> item = iter.next();
+
+    assertThat(item.getKey(), is(expectedTs));
+    assertThat(item.getValue(), is(expectedValue));
   }
 
   private void setScanMaxVersionsOnTables(AccumuloGraph graph, int maxVersions) throws Exception {
